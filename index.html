@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tank Shooting - Pilot Ur Own Tank</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+    <style>
+        body { margin: 0; background-color: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
+        
+        #start-overlay, #leaderboard-overlay, #pause-overlay, #how-to-overlay {
+            position: absolute; width: 800px; height: 600px; background: rgba(0,0,0,0.9);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: white; z-index: 10; border: 2px solid #333;
+        }
+
+        #pause-overlay, #how-to-overlay { display: none; }
+        #how-to-overlay { background: rgba(10, 10, 20, 0.95); }
+
+        .menu-btn {
+            padding: 12px 30px; font-size: 20px; font-family: 'Courier New', Courier, monospace;
+            background-color: #333333; color: white; border: 1px solid #555555;
+            cursor: pointer; font-weight: bold; border-radius: 5px; opacity: 0.3; transition: 0.3s; margin: 10px;
+        }
+        .menu-btn:hover { opacity: 1; background-color: #444444; transform: scale(1.05); }
+        
+        .quit-btn { border-color: #ff4444; color: #ff4444; }
+        .control-help { text-align: left; background: #222; padding: 20px; border-radius: 10px; border: 1px solid #444; margin: 15px 0; }
+        .key { color: #00ff00; font-weight: bold; }
+
+        #leaderboard-list { list-style: none; padding: 0; text-align: center; font-size: 22px; line-height: 2; margin-bottom: 20px; }
+        #leaderboard-list li { color: #00ff00; }
+        #clear-btn { background: none; border: none; color: #ff4444; cursor: pointer; font-family: 'Courier New', Courier, monospace; font-size: 14px; margin-top: 15px; text-decoration: underline; opacity: 0.6; }
+        #clear-btn:hover { opacity: 1; }
+        
+        canvas { border: 2px solid #333; }
+    </style>
+</head>
+<body>
+    <div id="start-overlay">
+        <h1>-- MAKE URSELF A HERO --</h1>
+        <p>CONQUER AND CONQUER!!</p>
+        <button id="start-btn" class="menu-btn">START GAME</button>
+        <button id="how-to-btn" class="menu-btn">HOW TO PLAY</button>
+        <button id="view-leaderboard-btn" class="menu-btn">LEADERBOARD</button>
+    </div>
+
+    <div id="how-to-overlay">
+        <h1>PILOT MANUAL</h1>
+        <div class="control-help">
+            <p><span class="key">ARROW KEYS</span> : Move your Tank</p>
+            <p><span class="key">SPACEBAR</span>   : Fire Cannon</p>
+            <p><span class="key">P KEY</span>      : Pause / Resume</p>
+            <hr style="border:0; border-top:1px solid #444;">
+            <p><strong>OBJECTIVE:</strong> Score as many points as possible in <span class="key">60 seconds</span>. Avoid colliding with enemies!</p>
+        </div>
+        <button id="close-how-to" class="menu-btn">GOT IT!</button>
+    </div>
+
+    <div id="pause-overlay">
+        <h1>GAME PAUSED</h1>
+        <button id="resume-btn" class="menu-btn">RESUME (P)</button>
+        <button id="quit-btn" class="menu-btn quit-btn">QUIT TO MENU</button>
+    </div>
+
+    <div id="leaderboard-overlay">
+        <h1>TOP PILOTS</h1>
+        <ul id="leaderboard-list"></ul>
+        <button id="back-btn" class="menu-btn">BACK</button>
+        <button id="clear-btn">RESET LEADERBOARD</button>
+    </div>
+
+    <div id="game-container"></div>
+
+    <script>
+        const config = {
+            type: Phaser.AUTO,
+            width: 800, height: 600,
+            parent: 'game-container',
+            physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
+            scene: { preload: preload, create: create, update: update }
+        };
+
+        let player, enemies, bullets, cursors, spaceBar, rKey, pKey;
+        let score = 0, health = 100, isInvincible = false;
+        let startTime, timerText, scoreText, healthBar, laserSound, explosionSound;
+        let gameStarted = false, gameFinished = false, isPaused = false;
+        let timeOffset = 0; 
+        const GAME_DURATION = 60; 
+
+        const game = new Phaser.Game(config);
+
+        function preload() {
+            this.load.image('background', 'assets/back.png');
+            this.load.image('player', 'assets/player.png');
+            this.load.image('enemy', 'assets/enemy.png');
+            this.load.image('bullet', 'assets/bullet.png');
+            this.load.audio('laser', 'assets/laser.wav');
+            this.load.audio('explosion', 'assets/explosion.wav');
+        }
+
+        function create() {
+            this.physics.pause(); 
+            this.add.image(400, 300, 'background');
+            laserSound = this.sound.add('laser');
+            explosionSound = this.sound.add('explosion');
+            
+            player = this.physics.add.sprite(400, 500, 'player');
+            player.setCollideWorldBounds(true);
+            
+            bullets = this.physics.add.group();
+            enemies = this.physics.add.group();
+            for (let i = 0; i < 6; i++) { spawnEnemy(); }
+
+            cursors = this.input.keyboard.createCursorKeys();
+            spaceBar = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+            rKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+            pKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+
+            scoreText = this.add.text(20, 20, 'Score: 0', { fontSize: '24px', fill: '#fff' });
+            timerText = this.add.text(20, 50, 'Time Left: 60s', { fontSize: '24px', fill: '#fff' });
+            
+            healthBar = this.add.graphics();
+            drawHealthBar();
+
+            this.physics.add.overlap(bullets, enemies, hitEnemy, null, this);
+            this.physics.add.overlap(player, enemies, hitPlayer, null, this);
+
+            // --- UI BUTTON LOGIC ---
+            document.getElementById('start-btn').onclick = () => {
+                document.getElementById('start-overlay').style.display = 'none';
+                this.physics.resume();
+                gameStarted = true;
+                startTime = Date.now();
+                timeOffset = 0;
+            };
+
+            document.getElementById('how-to-btn').onclick = () => {
+                document.getElementById('how-to-overlay').style.display = 'flex';
+            };
+
+            document.getElementById('close-how-to').onclick = () => {
+                document.getElementById('how-to-overlay').style.display = 'none';
+            };
+
+            document.getElementById('resume-btn').onclick = () => togglePause.call(this);
+            document.getElementById('quit-btn').onclick = () => location.reload();
+            document.getElementById('view-leaderboard-btn').onclick = showLeaderboard;
+            document.getElementById('back-btn').onclick = () => {
+                document.getElementById('leaderboard-overlay').style.display = 'none';
+                document.getElementById('start-overlay').style.display = 'flex';
+            };
+
+            document.getElementById('clear-btn').onclick = () => {
+                if(confirm("Are you sure? This will delete all high scores permanently!")) {
+                    localStorage.removeItem('tankHighScore');
+                    showLeaderboard();
+                }
+            };
+        }
+
+        function togglePause() {
+            if (!gameStarted || gameFinished) return;
+            isPaused = !isPaused;
+            if (isPaused) {
+                this.physics.pause();
+                document.getElementById('pause-overlay').style.display = 'flex';
+                timeOffset += (Date.now() - startTime);
+            } else {
+                this.physics.resume();
+                document.getElementById('pause-overlay').style.display = 'none';
+                startTime = Date.now();
+            }
+        }
+
+        function update() {
+            if (Phaser.Input.Keyboard.JustDown(pKey)) togglePause.call(this);
+
+            if (!gameStarted || gameFinished || isPaused) {
+                if (gameFinished && Phaser.Input.Keyboard.JustDown(rKey)) location.reload();
+                return;
+            }
+
+            let currentElapsed = Math.floor((timeOffset + (Date.now() - startTime)) / 1000);
+            let timeLeft = GAME_DURATION - currentElapsed;
+
+            if (timeLeft <= 0) {
+                timeLeft = 0;
+                finishGame.call(this);
+            }
+            timerText.setText('Time Left: ' + timeLeft + 's');
+
+            if (health <= 0) { finishGame.call(this); return; }
+
+            player.setVelocity(0);
+            if (cursors.left.isDown) player.setVelocityX(-400);
+            else if (cursors.right.isDown) player.setVelocityX(400);
+            if (cursors.up.isDown) player.setVelocityY(-400);
+            else if (cursors.down.isDown) player.setVelocityY(400);
+
+            if (Phaser.Input.Keyboard.JustDown(spaceBar)) fireBullet();
+            bullets.children.each(b => { if (b.y < 0) b.destroy(); });
+        }
+
+        function finishGame() {
+            gameFinished = true;
+            this.physics.pause();
+            this.add.text(400, 300, 'CHALLENGE COMPLETE', { fontSize: '64px', fill: '#fff' }).setOrigin(0.5);
+            setTimeout(() => {
+                let name = prompt(`Final Score: ${score}! Enter Pilot Name:`, "Pilot");
+                if (name) saveScore(name, score);
+                this.add.text(400, 380, 'Press R to Restart', { fontSize: '24px', fill: '#fff' }).setOrigin(0.5);
+            }, 500);
+        }
+
+        function fireBullet() {
+            let bullet = bullets.create(player.x, player.y - 20, 'bullet');
+            bullet.setVelocityY(-600);
+            laserSound.play();
+        }
+
+        function spawnEnemy() {
+            let enemy = enemies.create(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 200), 'enemy');
+            enemy.setVelocityX(Phaser.Math.Between(-150, 150));
+            enemy.setBounce(1).setCollideWorldBounds(true).body.velocity.y = 30;
+        }
+
+        function hitEnemy(bullet, enemy) {
+            bullet.destroy();
+            explosionSound.play();
+            enemy.setPosition(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 150));
+            score += 1;
+            scoreText.setText('Score: ' + score);
+        }
+
+        function hitPlayer(player, target) {
+            if (isInvincible || gameFinished) return;
+            health -= 20;
+            drawHealthBar();
+            if (health <= 0) finishGame.call(this);
+            else {
+                isInvincible = true;
+                player.setAlpha(0.5);
+                this.time.delayedCall(3000, () => { isInvincible = false; player.setAlpha(1); });
+            }
+        }
+
+        function drawHealthBar() {
+            healthBar.clear();
+            healthBar.fillStyle(0xff0000);
+            healthBar.fillRect(580, 20, 200, 20);
+            healthBar.fillStyle(0x00ff00);
+            healthBar.fillRect(580, 20, 200 * (health / 100), 20);
+        }
+
+        function saveScore(name, finalScore) {
+            let leaderboard = JSON.parse(localStorage.getItem('tankHighScore')) || [];
+            leaderboard.push({ name: name, score: finalScore });
+            leaderboard.sort((a, b) => b.score - a.score); 
+            leaderboard = leaderboard.slice(0, 5);
+            localStorage.setItem('tankHighScore', JSON.stringify(leaderboard));
+        }
+
+        function showLeaderboard() {
+            document.getElementById('start-overlay').style.display = 'none';
+            document.getElementById('leaderboard-overlay').style.display = 'flex';
+            let leaderboard = JSON.parse(localStorage.getItem('tankHighScore')) || [];
+            let list = document.getElementById('leaderboard-list');
+            list.innerHTML = leaderboard.length === 0 ? "<li>No Scores Recorded</li>" : 
+                leaderboard.map((entry, index) => `<li>#${index + 1} ${entry.name}: ${entry.score}</li>`).join('');
+        }
+    </script>
+</body>
+</html>
